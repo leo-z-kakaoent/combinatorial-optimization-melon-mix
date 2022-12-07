@@ -100,6 +100,44 @@ class SongClustersEnv(py_environment.PyEnvironment):
         max_per_user = jnp.max(mean_per_user_cluster, axis=1)
         return jnp.mean(max_per_user)
     
+    def _check_done(self):
+        if jnp.all([len(songs) == self._num_songs_per_cluster for songs in self._state['song_per_cluster']]):
+            done = True
+        else:
+            done = False
+        return done
+    
+    def _actionable_space(self):
+        return jnp.array([len(songs) < self._num_songs_per_cluster for songs in self._state['song_per_cluster']])
+    
+    def _update_state(self, action):
+        if not action == self._num_clusters:
+            
+        pass
+    
+    
+    def _step(self, action):
+        # 0. action이 타당한지 _actionable_space 불러서 확인
+        #  0.1. 아니면 바로 observe랑 reward 해서 보냄
+        actionable_space = self._actionable_space()
+        if action == self._num_clusters:
+            action_possible = True
+        else:
+            if actionable_space[action]:
+                action_possible = True
+            else:
+                action_possible = False
+        # 1. action을 받아서 state를 업데이트함
+        # 2. 업데이트된 state를 기준으로 done 체크
+        #  2.1. done이면 리워드 계산
+        if action_possible:
+            self._update_state(action)
+        
+        # 3. song_id를 업데이트함
+        # 4. 업데이트된 song_id 기준으로 observation 만듬
+        # 5. observation, 리워드 리턴하기
+        pass
+    
     # reset:
     # 1. Popularity 기준으로 순서대로 song id를 가져옴
     # 2. Observation 만들기
