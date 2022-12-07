@@ -34,6 +34,8 @@ class SongClustersEnv(py_environment.PyEnvironment):
             "occurence_per_cluster": {i: None for i in range(self._num_clusters)},
         }
         self._candidate_i = 0
+        self._observation = None
+        self._candidate_occurence = self._occur(self._candidate_i)
         self._episode_ended = False
         
     def action_spec(self):
@@ -42,18 +44,25 @@ class SongClustersEnv(py_environment.PyEnvironment):
     def observation_spec(self):
         return self._observation_spec
     
+    def observation(self):
+        return self._observation
+    
     def _reset(self):
         self._state = {
             "songs_per_cluster": [jnp.array([]) for _ in range(self._num_clusters)],
             "occurence_per_cluster": {i: None for i in range(self._num_clusters)},
         }
         self._candidate_i = 0
+        self._candidate_occurence = self._occur(self._candidate_i)
+        self._observation = self._observe()
         self._episode_ended = False
+        return ts.restart
     
-    def _occur(self, candidate):
+    def _occur(self):
+        candidate = self._songs[self._candidate_i]
         return jnp.array([jnp.isin(candidate, played, assume_unique=True) for played in self._user_played_jnp_list])
     
-    def _observe(self, candidate):
+    def _observe(self):
         # 2. Observation 만들기
         #  2.1. Song를 기준으로 Occurence Array를 만듬
         #  2.2. Occurence Array의 Sum으로 Popularity 가져오기 (1) popularity
@@ -71,15 +80,14 @@ class SongClustersEnv(py_environment.PyEnvironment):
                 any_co_occurence = jnp.zeros(1)
                 all_co_occurence = jnp.zeros(1)
             return any_co_occurence, all_co_occurence
-        candidate_occurence = self._occur(candidate)
-        popularity = jnp.mean(candidate_occurence)
+        popularity = jnp.mean(self._candidate_occurence)
         rank = self._candidate_i / len(self._songs)
         taken_seats = jnp.sum([len(songs) for songs in self._state["songs_per_cluster"]]) 
         left_seats = taken_seats / self._num_clusters / self._num_songs_per_cluster
         any_co_occurences = []
         all_co_occurences = []
         for i in range(self._num_clusters):
-            an, al = co_occur(i, candidate_occurence)
+            an, al = co_occur(i, self._candidate_occurence)
             any_co_occurences.append(an)
             all_co_occurences.append(al)
         
@@ -96,29 +104,27 @@ class SongClustersEnv(py_environment.PyEnvironment):
         # 각 유저별로 각 클러스터가 커버되는 비율을 계산하고 그 맥스만 모음
         #  - Occurence_per_cluster의 행의 mean을 구하고 stack함
         #  - 맥스를 구하고 다시 mean함
-        mean_per_user_cluster = jnp.column_stack([jnp.mean(v, axis=1) for v in self._state['occuence_per_cluster'].values])
+        mean_per_user_cluster = jnp.column_stack([jnp.mean(v, axis=1) for v in self._state['occurence_per_cluster'].values])
         max_per_user = jnp.max(mean_per_user_cluster, axis=1)
         return jnp.mean(max_per_user)
     
-    def _check_done(self):
-        if jnp.all([len(songs) == self._num_songs_per_cluster for songs in self._state['song_per_cluster']]):
+    def _check_episode_end(self):
+        if jnp.all([len(songs) == self._num_songs_per_cluster for songs in self._state['songs_per_cluster']]):
             done = True
         else:
             done = False
         return done
     
     def _actionable_space(self):
-        return jnp.array([len(songs) < self._num_songs_per_cluster for songs in self._state['song_per_cluster']])
+        return jnp.array([len(songs) < self._num_songs_per_cluster for songs in self._state['songs_per_cluster']])
     
     def _update_state(self, action):
-        if not action == self._num_clusters:
-            
-        pass
-    
+        # songs per cluster에 곡을 추가하고
+        self._state['songs_per_cluster'][action] = jnp.append(self._state['songs_per_cluster'][action], self._songs[self._candidate_i])
+        # occurence per cluster에 해당하는 곡의 occurence도 추가한다
+        self._state['occurence_per_cluster'][action] = jnp.append(self._state['occurence_per_cluster'][action], self._candidate_occurence, axis=1)
     
     def _step(self, action):
-        # 0. action이 타당한지 _actionable_space 불러서 확인
-        #  0.1. 아니면 바로 observe랑 reward 해서 보냄
         actionable_space = self._actionable_space()
         if action == self._num_clusters:
             action_possible = True
@@ -127,41 +133,19 @@ class SongClustersEnv(py_environment.PyEnvironment):
                 action_possible = True
             else:
                 action_possible = False
-        # 1. action을 받아서 state를 업데이트함
-        # 2. 업데이트된 state를 기준으로 done 체크
-        #  2.1. done이면 리워드 계산
+                
         if action_possible:
-            self._update_state(action)
-        
-        # 3. song_id를 업데이트함
-        # 4. 업데이트된 song_id 기준으로 observation 만듬
-        # 5. observation, 리워드 리턴하기
-        pass
-    
-    # reset:
-    # 1. Popularity 기준으로 순서대로 song id를 가져옴
-    # 2. Observation 만들기
-    #  2.1. Song를 기준으로 Occurence Array를 만듬
-    #  2.2. Occurence Array의 Sum으로 Popularity 가져오기 (1)
-    #  2.2. 각 Cluster의 co-occurence 를 계산해서 sum함 (100) Any 기준
-    #  2.3. All 기준 (100)
-    
-    # agent가 action를 뱉어줌
-    
-    # step:
-    # 1. action을 받아서 state를 업데이트함
-    # 2. 업데이트된 state를 기준으로 done 체크
-    #  2.1. done이면 리워드 계산
-    # 3. song_id를 업데이트함
-    # 4. 업데이트된 song_id 기준으로 observation 만듬
-    # 5. observation, 리워드 리턴하기
-    
-    # done 조건
-    # 1. 모든 클러스터에 곡이 찼을때 (리워드 계산)
-    # 2. 곡 리스트가 다 소모되었을때 (리워드 0)
-    #  2.1. 남은 곡과 채워져야하는 곡수를 계산해서 넣기? (굳이 코딩할 필요 있나?)
-    
-    # reward 계산식
-    # 각 유저별로 각 클러스터가 커버되는 비율을 계산하고 그 맥스만 모음
-    #  - Occurence_per_cluster의 행의 mean을 구하고 stack함
-    #  - 맥스를 구하고 다시 mean함
+            if action == self._num_clusters: # Passing Action
+                self._candidate_i += 1
+                self._candidate_occurence = self._occur(self._candidate_i)
+                self._observation = self._observe()
+            else:
+                self._update_state(action)
+                self._candidate_i += 1
+                self._candidate_occurence = self._occur(self._candidate_i)
+                self._observation = self._observe()
+                
+        if self._check_episode_end():
+            return ts.termination(self._observation, self._reward())
+        else:
+            return ts.transition(self._observation, reward=0.0, discount=1.0)
